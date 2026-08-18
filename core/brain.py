@@ -49,8 +49,11 @@ generation_config = types.GenerateContentConfig(
 
 def create_new_session():
     global client
-    history_data = load_memory()
-    gemini_history = [types.Content(role=msg["role"], parts=[types.Part.from_text(text=msg["parts"])]) for msg in history_data]
+    memory_data = load_memory()
+    # Hanya ambil Lapis 1 (Messages) untuk dilempar ke Google API
+    active_chat = memory_data.get("messages", [])
+    
+    gemini_history = [types.Content(role=msg["role"], parts=[types.Part.from_text(text=msg["parts"])]) for msg in active_chat]
     return client.chats.create(model=config.MODEL_NAME, config=generation_config, history=gemini_history)
 
 def process_user_input(user_msg):
@@ -84,9 +87,13 @@ def process_user_input(user_msg):
                 ai_state['css_inject'] = validate_css(ai_state.get('css_inject', ''))
                 ai_state['js_inject'] = validate_js(ai_state.get('js_inject', ''))
                 
-                history = load_memory()
-                history.extend([{"role": "user", "parts": safe_user_msg}, {"role": "model", "parts": raw_text}])
-                save_memory(history)
+                # Simpan menggunakan memori 3 lapis yang baru
+                mem = load_memory()
+                if "messages" not in mem:
+                    mem["messages"] = []
+                mem["messages"].append({"role": "user", "parts": safe_user_msg})
+                mem["messages"].append({"role": "model", "parts": raw_text})
+                save_memory(mem)
                 
                 return ai_state
             else:
@@ -95,7 +102,6 @@ def process_user_input(user_msg):
         except Exception as e:
             idx = get_current_key_index()
             print(f"[BRAIN ERROR] API ke-{idx + 1} Gagal: {str(e)}")
-            # TERINTEGRASI PENUH DENGAN CIRCUIT BREAKER
             client = rotate_key(str(e)) 
             chat_session = None 
             
