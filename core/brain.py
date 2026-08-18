@@ -95,7 +95,8 @@ def process_user_input(user_msg):
         except Exception as e:
             idx = get_current_key_index()
             print(f"[BRAIN ERROR] API ke-{idx + 1} Gagal: {str(e)}")
-            client = rotate_key()
+            # TERINTEGRASI PENUH DENGAN CIRCUIT BREAKER
+            client = rotate_key(str(e)) 
             chat_session = None 
             
     return {
