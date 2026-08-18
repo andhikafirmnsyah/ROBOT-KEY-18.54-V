@@ -1,52 +1,17 @@
 import json
-import os
-from google import genai
 from google.genai import types
 import config
+from core.memory import load_memory, save_memory
+from core.key_manager import get_gemini_client, rotate_key, get_current_key_index
 
-# ==========================================
-# INISIALISASI ROTATOR API
-# ==========================================
-current_key_index = 0
-chat_session = None
 client = None
+chat_session = None
 
-def get_gemini_client():
-    global current_key_index
-    active_key = config.API_KEYS[current_key_index]
-    return genai.Client(api_key=active_key)
-
-# Coba inisialisasi awal
 try:
     client = get_gemini_client()
 except Exception:
     pass
 
-# ==========================================
-# SISTEM MEMORI JANGKA PANJANG & AUTO-HEAL
-# ==========================================
-def load_memory():
-    if os.path.exists(config.MEMORY_FILE):
-        try:
-            with open(config.MEMORY_FILE, 'r') as f: 
-                return json.load(f)
-        except Exception:
-            print("Memori korup! Memulai memori bersih...")
-            return []
-    return []
-
-def save_memory(history):
-    # Pastikan folder memory/ ada sebelum menyimpan
-    os.makedirs(os.path.dirname(config.MEMORY_FILE), exist_ok=True)
-    try:
-        with open(config.MEMORY_FILE, 'w') as f: 
-            json.dump(history[-config.MAX_MEMORY_HISTORY:], f)
-    except Exception as e:
-        print(f"Gagal menyimpan memori: {e}")
-
-# ==========================================
-# SYSTEM INSTRUCTION: PENGUNCI UI & SIFAT ROBOT
-# ==========================================
 system_instruction = """
 Kamu adalah Robot AI bernama Keyy. Panggil user "Komandan" atau "Bang".
 SIFAT: Sangat pintar, setia, patuh, dan robotik. SUARA KAMU ADALAH ROBOT (BIP/BEEP), BUKAN MANUSIA.
@@ -74,7 +39,7 @@ generation_config = types.GenerateContentConfig(
             "intensity": {"type": "INTEGER"},
             "energy": {"type": "INTEGER"},
             "animation": {"type": "STRING", "enum": ["bounce", "shake", "tilt", "nod", "none"]},
-            "css_inject": {"type": "STRING", "description": "Kode CSS khusus elemen .eye atau .face. DILARANG menggunakan body/html."},
+            "css_inject": {"type": "STRING"},
             "js_inject": {"type": "STRING"}
         },
         "required": ["text", "emotion", "intensity", "energy", "animation", "css_inject", "js_inject"]
@@ -88,12 +53,11 @@ def create_new_session():
     return client.chats.create(model=config.MODEL_NAME, config=generation_config, history=gemini_history)
 
 def process_user_input(user_msg):
-    global chat_session, client, current_key_index
+    global chat_session, client
     
     if not user_msg:
         return {"text": "Bip! Kosong.", "emotion": "confused", "intensity": 5, "energy": 5, "animation": "tilt", "css_inject": "", "js_inject": ""}
 
-    # PROSES ROTASI API OTOMATIS
     max_retries = len(config.API_KEYS)
     
     for attempt in range(max_retries):
@@ -111,7 +75,6 @@ def process_user_input(user_msg):
                 
                 ai_state = json.loads(raw_text)
                 
-                # Simpan Ingatan
                 history = load_memory()
                 history.extend([{"role": "user", "parts": user_msg}, {"role": "model", "parts": raw_text}])
                 save_memory(history)
@@ -121,17 +84,13 @@ def process_user_input(user_msg):
                 raise Exception("Blank Output")
                 
         except Exception as e:
-            print(f"ERROR PADA API KE-{current_key_index + 1}: {str(e)}")
-            # ROTASI: Ganti ke API Key selanjutnya
-            current_key_index = (current_key_index + 1) % len(config.API_KEYS)
-            print(f"BERPINDAH KE API KEY BERIKUTNYA (INDEX {current_key_index})...")
-            client = get_gemini_client()
+            idx = get_current_key_index()
+            print(f"[BRAIN ERROR] API ke-{idx + 1} Gagal: {str(e)}")
+            client = rotate_key()
             chat_session = None 
             
-    # Jika ke-3 API mati semua
     return {
         "text": "BIP! SEMUA API KEY HABIS ATAU GAGAL! KONEKSI TERPUTUS!",
         "emotion": "error", "intensity": 10, "energy": 10, "animation": "shake",
         "css_inject": "", "js_inject": "triggerAutoHeal();"
     }
-
