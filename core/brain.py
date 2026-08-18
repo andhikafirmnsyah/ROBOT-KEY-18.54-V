@@ -3,6 +3,7 @@ from google.genai import types
 import config
 from core.memory import load_memory, save_memory
 from core.key_manager import get_gemini_client, rotate_key, get_current_key_index
+from core.security import sanitize_input, validate_css, validate_js
 
 client = None
 chat_session = None
@@ -39,7 +40,7 @@ generation_config = types.GenerateContentConfig(
             "intensity": {"type": "INTEGER"},
             "energy": {"type": "INTEGER"},
             "animation": {"type": "STRING", "enum": ["bounce", "shake", "tilt", "nod", "none"]},
-            "css_inject": {"type": "STRING"},
+            "css_inject": {"type": "STRING", "description": "Kode CSS khusus elemen .eye atau .face. DILARANG menggunakan body/html."},
             "js_inject": {"type": "STRING"}
         },
         "required": ["text", "emotion", "intensity", "energy", "animation", "css_inject", "js_inject"]
@@ -55,8 +56,11 @@ def create_new_session():
 def process_user_input(user_msg):
     global chat_session, client
     
-    if not user_msg:
-        return {"text": "Bip! Kosong.", "emotion": "confused", "intensity": 5, "energy": 5, "animation": "tilt", "css_inject": "", "js_inject": ""}
+    # 1. FILTER INPUT: Bersihkan teks dari Speech Recognition (Security Gate)
+    safe_user_msg = sanitize_input(user_msg)
+    
+    if not safe_user_msg:
+        return {"text": "Bip! Input tidak valid.", "emotion": "confused", "intensity": 5, "energy": 5, "animation": "tilt", "css_inject": "", "js_inject": ""}
 
     max_retries = len(config.API_KEYS)
     
@@ -65,7 +69,8 @@ def process_user_input(user_msg):
             if chat_session is None:
                 chat_session = create_new_session()
                 
-            response = chat_session.send_message(user_msg)
+            # Gunakan pesan yang sudah dibersihkan satpam
+            response = chat_session.send_message(safe_user_msg)
             
             if response.text:
                 raw_text = response.text.strip()
@@ -75,8 +80,12 @@ def process_user_input(user_msg):
                 
                 ai_state = json.loads(raw_text)
                 
+                # 2. FILTER OUTPUT: Saring CSS dan JS dari AI sebelum dikirim ke UI
+                ai_state['css_inject'] = validate_css(ai_state.get('css_inject', ''))
+                ai_state['js_inject'] = validate_js(ai_state.get('js_inject', ''))
+                
                 history = load_memory()
-                history.extend([{"role": "user", "parts": user_msg}, {"role": "model", "parts": raw_text}])
+                history.extend([{"role": "user", "parts": safe_user_msg}, {"role": "model", "parts": raw_text}])
                 save_memory(history)
                 
                 return ai_state
